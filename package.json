@@ -1,0 +1,46 @@
+{
+  "name": "starforge",
+  "version": "1.0.0",
+  "description": "星炉 StarForge — 零依赖纯 ESM JavaScript 世界顶级 AI 引擎：从数学内核到可验证认知智能体",
+  "type": "module",
+  "main": "src/cli.mjs",
+  "bin": {
+    "starforge": "src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test",
+    "selftest": "node src/cli.mjs selftest",
+    "bench": "node src/cli.mjs bench",
+    "demo": "node src/cli.mjs demo",
+    "ask": "node src/cli.mjs ask",
+    "train-gpt": "node src/cli.mjs train-gpt",
+    "serve": "node src/cli.mjs serve",
+    "gen-data": "node tools/gen-data.mjs"
+  },
+  "keywords": [
+    "ai",
+    "machine-learning",
+    "deep-learning",
+    "transformer",
+    "gpt",
+    "autodiff",
+    "muon",
+    "optimizer",
+    "svm",
+    "hmm",
+    "bm25",
+    "reinforcement-learning",
+    "zero-dependency",
+    "javascript"
+  ],
+  "author": "晨星 (CJX0712)",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CJX0712/starforge.git"
+  },
+  "homepage": "https://github.com/CJX0712/starforge"
+}

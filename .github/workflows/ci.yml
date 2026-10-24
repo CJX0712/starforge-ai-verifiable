@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x, 22.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Node 版本
+        run: node --version
+
+      - name: 安装依赖（本项目零依赖，仅作校验）
+        run: npm install --no-audit --no-fund || echo "无需安装"
+
+      - name: 不变量自检（每个算法的可执行金标准）
+        run: node src/cli.mjs selftest
+
+      - name: 测试套件
+        run: node --test
+
+      - name: 基准套件（quick 模式）
+        run: node src/cli.mjs bench --quick

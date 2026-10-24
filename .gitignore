@@ -1,0 +1,13 @@
+# 依赖（本项目零依赖，保留以防误操作）
+node_modules/
+
+# 运行产物
+bench/results.json
+bench/nn-bench.json
+web/weights.json
+.agent-memory.jsonl
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+*.log
