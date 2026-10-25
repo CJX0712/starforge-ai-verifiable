@@ -27,6 +27,7 @@ import { Tensor, concatCols, gradCheckTensor } from './autodiff.mjs';
 import { createOptimizer, clipGlobalNorm, makeSchedule } from './optim.mjs';
 import { createRng, softmaxArr } from './linalg.mjs';
 import { suite } from './verify.mjs';
+import { loadIris, zscoreFit, zscoreApply, trainTestSplit, metrics } from './datasets.mjs';
 
 // ==================== 基础工具 ====================
 
@@ -1075,6 +1076,142 @@ export function nnSelfCheck() {
   }
 
   return [s.report()];
+}
+
+// ==================== 性能基准 ====================
+
+/**
+ * 神经网络模块基准（统一契约：{ module, results: [{name,value,unit,target,ok,detail}] }）。
+ *
+ * 设计原则：CI 必须能在秒级跑完，因此这里只做「小模型 + 合成数据」的确定性实验，
+ * 完整规模的 GPT 训练曲线见独立脚本 `node bench/nn-bench.mjs`（输出 bench/nn-results.json）。
+ *
+ * 覆盖的五条不变量：
+ * 1. 反向传播金标准——单批过拟合 loss → 0（若梯度有任何错误则无法收敛到 1e-4 以下）；
+ * 2. 因果掩码——改动位置 t 之后的 token，不影响位置 ≤ t 的 logits；
+ * 3. 优化器有效性——同预算下 AdamW 与 Muon 均显著下降；
+ * 4. 权重序列化往返——base64 编解码逐位一致；
+ * 5. 监督头可用性——Iris MLP(4→16→3) 测试准确率 ≥ 0.95。
+ */
+export async function bench({ quick = false } = {}) {
+  const results = [];
+  const rec = (name, value, unit, target, ok, detail = '') => {
+    results.push({ name, value: Number(value), unit, target, ok: !!ok, detail });
+  };
+
+  const V = 24;                       // 合成词表大小
+  const mkBatch = (seed) => {
+    const rng = createRng(seed);
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const s = new Array(8);
+      for (let j = 0; j < 8; j++) s[j] = rng.randint(V);
+      ids.push(s);
+    }
+    return ids;
+  };
+  const batch = mkBatch(42);
+
+  // ---- 1. 反向传播金标准：单批过拟合 ----
+  {
+    const steps = quick ? 500 : 800;
+    const model = new MiniGPT({ vocabSize: V, dModel: 16, nLayer: 1, nHead: 2, ctx: 8, rng: createRng(42) });
+    const { history, finalLoss } = trainModel(model, {
+      getBatch: () => ({ x: batch, y: batch }),
+      epochs: 1, stepsPerEpoch: steps, lr: 1e-2, optimizer: 'adamw',
+      schedule: 'const', clip: 1.0, logEvery: 0,
+    });
+    const initial = history.length ? history[0].loss : NaN;
+    rec('nn/overfit-single-batch', finalLoss, 'loss', '<1e-3',
+      finalLoss < 1e-3 && finalLoss < initial,
+      `初始 ${initial.toFixed(4)} → 最终 ${finalLoss.toExponential(2)}（${steps} 步，反向传播金标准）`);
+  }
+
+  // ---- 2. 因果掩码不变量 ----
+  {
+    const model = new MiniGPT({ vocabSize: V, dModel: 16, nLayer: 1, nHead: 2, ctx: 8, rng: createRng(7) });
+    const ids = [[1, 5, 9, 2, 7, 3, 11, 4]];
+    const l1 = model.forward(ids);
+    const alt = [[1, 5, 9, 2, 7, 13, 19, 6]];   // 仅改动位置 ≥ 5 的 token
+    const l2 = model.forward(alt);
+    // logits 布局 [B*T, V]：位置 p 对应行 p
+    let maxDiff = 0;
+    for (let p = 0; p < 5; p++) {
+      for (let k = 0; k < V; k++) {
+        const d = Math.abs(l1.get(p, k) - l2.get(p, k));
+        if (d > maxDiff) maxDiff = d;
+      }
+    }
+    rec('nn/causal-mask-invariance', maxDiff, 'maxdiff', '<1e-12',
+      maxDiff < 1e-12, `改动位置 ≥5 的 token 后，位置 <5 的 logits 最大偏差 ${maxDiff.toExponential(1)}`);
+  }
+
+  // ---- 3. 优化器有效性：AdamW vs Muon 同预算 ----
+  {
+    const steps = quick ? 150 : 400;
+    const run = (optimizer) => {
+      const m = new MiniGPT({ vocabSize: V, dModel: 16, nLayer: 1, nHead: 2, ctx: 8, rng: createRng(42) });
+      const r = trainModel(m, {
+        getBatch: () => ({ x: batch, y: batch }),
+        epochs: 1, stepsPerEpoch: steps, lr: 1e-2, optimizer,
+        schedule: 'const', clip: 1.0, logEvery: 0,
+      });
+      return r;
+    };
+    const a = run('adamw');
+    const m = run('muon');
+    const dropA = a.finalLoss < a.history[0].loss * 0.6;
+    const dropM = m.finalLoss < m.history[0].loss * 0.6;
+    rec('nn/optimizer-adamw-vs-muon', m.finalLoss, 'loss', '两者均下降 >40%',
+      dropA && dropM,
+      `AdamW ${a.history[0].loss.toFixed(4)}→${a.finalLoss.toFixed(4)}，Muon ${m.history[0].loss.toFixed(4)}→${m.finalLoss.toFixed(4)}（各 ${steps} 步）`);
+  }
+
+  // ---- 4. 权重序列化往返（逐位一致） ----
+  {
+    const arr = new Float64Array(257);
+    const rng = createRng(3);
+    for (let i = 0; i < arr.length; i++) arr[i] = rng.normal();
+    const back = decodeWeightsBase64(encodeWeightsBase64(arr));
+    let maxDiff = 0;
+    for (let i = 0; i < arr.length; i++) maxDiff = Math.max(maxDiff, Math.abs(arr[i] - back[i]));
+    rec('nn/weight-serialization-roundtrip', maxDiff, 'maxdiff', '==0',
+      maxDiff === 0, `${arr.length} 个 Float64 经 base64 往返逐位一致`);
+  }
+
+  // ---- 5. Iris MLP 监督头可用性 ----
+  {
+    const { X, y } = loadIris();
+    const Z = zscoreApply(X, zscoreFit(X));
+    const { train, test } = trainTestSplit(Z, y, { testRatio: 0.3, seed: 42 });
+    const rng = createRng(42);
+    const l1 = new Linear(4, 16, { rng });
+    const l2 = new Linear(16, 3, { rng });
+    const params = [...l1.parameters(), ...l2.parameters()];
+    const fwd = (x) => l2.forward(l1.forward(x).relu());
+    const opt = createOptimizer('adamw', params, { lr: 1e-2 });
+    const Xtr = train.X.to2D();
+    const Xte = test.X.to2D();
+    const steps = quick ? 200 : 400;
+    let acc = 0;
+    for (let s = 0; s < steps; s++) {
+      const logits = fwd(Xtr);
+      logits.crossEntropyLogits(train.y).backward();
+      opt.step();
+      const out = fwd(Xte);
+      const pred = [];
+      for (let i = 0; i < out.rows; i++) {
+        let bi = 0; let bv = -Infinity;
+        for (let k = 0; k < 3; k++) { const v = out.get(i, k); if (v > bv) { bv = v; bi = k; } }
+        pred.push(bi);
+      }
+      acc = metrics.accuracy(test.y, pred);
+    }
+    rec('nn/iris-mlp-accuracy', acc, 'acc', '>=0.95', acc >= 0.95,
+      `MLP(4→16→3) AdamW ${steps} 步，测试集 ${Xte.length} 样本`);
+  }
+
+  return { module: 'nn', results };
 }
 
 /** selfCheck 别名（与项目 selfcheck.mjs 的命名约定兼容） */

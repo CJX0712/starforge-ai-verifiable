@@ -9,7 +9,7 @@
 | 维度 | 数量 | 状态 |
 |------|------|------|
 | 不变量自检（selfCheck） | **129 / 129 项全过** | ✅ |
-| 性能基准（bench） | **49 项全过**（classify 29 + cluster 7 + sequence 4 + retrieval 5 + rl 4） | ✅ |
+| 性能基准（bench） | **54 项全过**（classify 29 + cluster 7 + sequence 4 + nn 5 + retrieval 5 + rl 4） | ✅ |
 | 单元/集成测试（`node --test`） | **91 / 91 通过**（约 3.1s） | ✅ |
 
 ### 自检分项计数
@@ -107,9 +107,21 @@
 
 - 最优臂选择率曲线（250 步/窗）：0.19 → 0.27 → 0.35 → 0.67 → 0.86 → 0.86 → 0.91 → 0.93 → 0.94 → 0.96 → 0.94 → 0.97（显著学习效应）。
 
-## 6. 神经网络与 MiniGPT（src/nn.mjs）
+## 6. 神经网络与 MiniGPT（src/nn.mjs，5 项）
 
-> 详见 `bench/nn-results.json`（独立可复现：`node bench/nn-bench.mjs`）。
+### 6.1 统一基准套件（`node src/cli.mjs bench`，CI 入口，quick 模式约 2 秒）
+
+| 基准项 | 指标 | 结果 | 目标 |
+|--------|------|------|------|
+| nn/overfit-single-batch | 单批过拟合 loss | 3.9592 → **3.89e-4**（500 步）| <1e-3 ✅ |
+| nn/causal-mask-invariance | 改动位置 ≥5 后位置 <5 的 logits 偏差 | **0.0**（逐位一致）| <1e-12 ✅ |
+| nn/optimizer-adamw-vs-muon | 同预算最终 loss | AdamW 2.5e-3 / Muon **1.5e-3** | 两者均下降 >40% ✅ |
+| nn/weight-serialization-roundtrip | 257 个 Float64 base64 往返偏差 | **0** | ==0 ✅ |
+| nn/iris-mlp-accuracy | MLP(4→16→3) 测试准确率 | 0.9556 | ≥0.95 ✅ |
+
+> 「单批过拟合 → loss ≈ 0」是反向传播正确性最强证据：若任一梯度方向错误，模型绝不可能收敛到 1e-4 以下。
+
+### 6.2 完整规模训练基准（`node bench/nn-bench.mjs`，约 5 分钟，结果写入 bench/nn-results.json）
 
 | 任务 | 指标 | 结果 |
 |------|------|------|
