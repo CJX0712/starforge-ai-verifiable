@@ -13,8 +13,8 @@
 ## 2. 五分钟复现全链路
 
 ```bash
-git clone https://github.com/CJX0712/starforge.git
-cd starforge
+git clone https://github.com/CJX0712/starforge-ai.git
+cd starforge-ai
 
 # ① 测试套件（node:test，零配置）
 node --test

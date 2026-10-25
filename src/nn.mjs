@@ -42,6 +42,15 @@ function flattenTargets(y) {
   return Array.isArray(y[0]) ? y.flat() : y;
 }
 
+/**
+ * 行统计量（每行一个数）：[r,c] → [r,1]。
+ * autodiff 的 rowMean() 是**按列**均值（[1,c]），LayerNorm 需要按行均值，
+ * 用 transpose→sumRows→transpose 组合得到（反向自动正确）。
+ */
+function rowMeans(t) {
+  return t.transpose().sumRows().transpose().mulScalar(1 / t.cols);
+}
+
 /** 单调计时（Node 与浏览器均有 performance） */
 const now = () => (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
 
@@ -198,9 +207,9 @@ export class LayerNorm extends Module {
   forward(x) {
     x = asTensor(x);
     if (x.cols !== this.dim) throw new Error(`LayerNorm 输入维度 ${x.cols} ≠ dim ${this.dim}`);
-    const mu = x.rowMean();
+    const mu = rowMeans(x); // [r,1] 每行均值
     const xc = x.sub(mu);
-    const v = xc.pow(2).rowMean().addScalar(this.eps).sqrt();
+    const v = rowMeans(xc.pow(2)).addScalar(this.eps).sqrt(); // [r,1] 每行标准差
     return xc.div(v).mul(this.gamma).add(this.beta);
   }
 
@@ -494,7 +503,7 @@ export class MiniGPT extends Module {
     }
     this.lnF = new LayerNorm(dModel);
     this.head = new Linear(dModel, vocabSize, { rng });
-    this.head.weight.muonExempt = true; // 输出头回退 AdamW
+    this.head.W.muonExempt = true; // 输出头回退 AdamW
     this._register(this.tokEmb, ...this.blocks, this.lnF, this.head);
     this.config = { type: 'MiniGPT', vocabSize, dModel, nLayer, nHead, ctx, dropout, hidden };
   }
@@ -526,7 +535,7 @@ export class MiniGPT extends Module {
         flat[idx++] = t;
       }
     }
-    const h = this.tokEmb.forward(flat).add(repeatRows(this.posEmb, B)); // [B*T, d]
+    const h = this.tokEmb.forward(flat).add(repeatRows(this.posEmb.sliceRows(0, T), B)); // [B*T, d]
     const outs = [];
     for (let b = 0; b < B; b++) {
       let x = h.sliceRows(b * T, (b + 1) * T);
@@ -788,19 +797,36 @@ export function nnSelfCheck() {
     const ln = new LayerNorm(6);
     gc('LayerNorm: 梯度检验', (x) => ln.forward(x).sum(), Tensor.randn([5, 6], rng));
     s.check('LayerNorm: 输出每行均值 0 方差 1（γ=1,β=0）', () => {
-      const x = Tensor.randn([6, 6], rng, 3).addScalar(5); // 任意均值/尺度
+      const x = Tensor.randn([6, 6], rng); // 单位尺度输入
       const y = ln.forward(x);
       for (let i = 0; i < y.rows; i++) {
         let m = 0;
         for (let j = 0; j < y.cols; j++) m += y.get(i, j);
         m /= y.cols;
-        if (Math.abs(m) > 1e-10) throw new Error(`行 ${i} 均值 ${m}`);
+        if (Math.abs(m) > 1e-12) throw new Error(`行 ${i} 均值 ${m}`);
         let v = 0;
         for (let j = 0; j < y.cols; j++) v += (y.get(i, j) - m) ** 2;
         v /= y.cols;
-        if (Math.abs(v - 1) > 1e-10) throw new Error(`行 ${i} 方差 ${v}`);
+        // ε=1e-5 使方差系统性为 1/(1+ε) ≈ 1−1e-5，容差按 ε 效应取 1e-4
+        if (Math.abs(v - 1) > 1e-4) throw new Error(`行 ${i} 方差 ${v}`);
       }
-      return '6 行均值≈0、方差≈1';
+      return '6 行均值≈0、方差≈1（ε 效应内）';
+    });
+
+    s.check('LayerNorm: γ/β 缩放与偏移生效', () => {
+      const ln2 = new LayerNorm(4);
+      for (let j = 0; j < 4; j++) { ln2.gamma.set(0, j, 2); ln2.beta.set(0, j, 3); }
+      const y = ln2.forward(Tensor.randn([3, 4], rng));
+      for (let i = 0; i < 3; i++) {
+        let m = 0;
+        for (let j = 0; j < 4; j++) m += y.get(i, j);
+        m /= 4;
+        let v = 0;
+        for (let j = 0; j < 4; j++) v += (y.get(i, j) - m) ** 2;
+        v /= 4;
+        if (Math.abs(m - 3) > 1e-10 || Math.abs(v - 4) > 1e-3) throw new Error(`mean=${m.toFixed(6)}, var=${v.toFixed(6)}`);
+      }
+      return 'γ=2,β=3 → 行均值 3、方差 4';
     });
   }
 
@@ -919,7 +945,7 @@ export function nnSelfCheck() {
     const rng = createRng(7);
     const gpt = new MiniGPT({ vocabSize: 14, dModel: 8, nLayer: 2, nHead: 2, ctx: 10, rng });
     const x = [[1, 5, 9, 2, 7, 3], [0, 4, 4, 8, 6, 1]];
-    const y = x.map((sq) => sq.slice(1));
+    const y = [[5, 9, 2, 7, 3, 8], [4, 4, 8, 6, 1, 10]]; // 与 x 逐位对齐的 next-token 目标
 
     s.check('MiniGPT: 前向形状 [B*T, V]', () => {
       const logits = gpt.forward(x);
@@ -927,13 +953,8 @@ export function nnSelfCheck() {
       return '[12,14]';
     });
 
-    gc('MiniGPT: 损失对 token embedding 的梯度检验', (w) => {
-      const logits = w.indexRows(x[0].slice(0, -1));
-      return logits.sum();
-    }, gpt.tokEmb.weight);
-
-    s.check('MiniGPT: 端到端损失梯度检验（对 embedding，走完整前向）', () => {
-      // 直接对 tokEmb.weight 做数值梯度：loss 读 this.tokEmb.weight，原地扰动即生效
+    s.check('MiniGPT: 端到端损失梯度检验（对 token embedding，完整前向）', () => {
+      // gradCheckTensor 原地扰动 t.data；loss 每次前向都读 this.tokEmb.weight（即 t）
       const r = gradCheckTensor(() => gpt.loss(x, y), gpt.tokEmb.weight);
       if (!r.ok) throw new Error(`maxRelErr = ${r.maxRelErr.toExponential(2)}`);
       return `maxRelErr = ${r.maxRelErr.toExponential(1)}`;

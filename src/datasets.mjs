@@ -161,8 +161,18 @@ export const metrics = {
     for (let i = 0; i < yTrue.length; i++) M.set(yTrue[i], yPred[i], M.get(yTrue[i], yPred[i]) + 1);
     return M;
   },
-  /** 宏平均 F1（各类 F1 的算术平均，零除记 0） */
+  /**
+   * 宏平均 F1（各类 F1 的算术平均，零除记 0）
+   * @param {ArrayLike<number>} yTrue 真实标签（0..k-1）
+   * @param {ArrayLike<number>} yPred 预测标签
+   * @param {number} [k] 类别数；缺省自动推断为 max(true,pred)+1（sklearn 风格容错）
+   */
   macroF1(yTrue, yPred, k) {
+    if (k == null) {
+      let mx = 0;
+      for (let i = 0; i < yTrue.length; i++) mx = Math.max(mx, yTrue[i], yPred[i]);
+      k = mx + 1;
+    }
     let sum = 0;
     for (let c = 0; c < k; c++) {
       let tp = 0, fp = 0, fn = 0;

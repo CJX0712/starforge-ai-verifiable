@@ -1,0 +1,60 @@
+{
+  "module": "nn",
+  "preset": "tiny",
+  "config": {
+    "dModel": 32,
+    "nLayer": 2,
+    "nHead": 4,
+    "ctx": 64,
+    "batch": 16,
+    "steps": 300,
+    "lr": 0.001,
+    "optimizer": "adamw"
+  },
+  "train": {
+    "preset": {
+      "dModel": 32,
+      "nLayer": 2,
+      "nHead": 4,
+      "ctx": 64,
+      "batch": 16,
+      "steps": 300,
+      "lr": 0.001,
+      "optimizer": "adamw"
+    },
+    "nParams": 33045,
+    "initialLoss": 4.6001140120780235,
+    "finalLoss": 2.7238607003566444,
+    "perplexity": 15.239042197594927,
+    "wallMs": 128992.951,
+    "stepsPerSec": 2.325708479992833,
+    "samples": [
+      {
+        "temperature": 0.5,
+        "text": "To be, or not to be  u m s s cas an s wee be ou t thisin  iibe n ithe a  t  s  soou t oritheowe  iche we d te ,\n\nhe  r st we se we  bathe w"
+      },
+      {
+        "temperature": 0.8,
+        "text": "To be, or not to be\n\n“kLchanncIe ald euat acedo teenwith De  as hethe e  t apa ssenit mhowoowuen\n cinowhihehe a  wor oriy y,eWt æThalatothy"
+      },
+      {
+        "temperature": 1,
+        "text": "To be, or not to be\n\n”eI, ann]as,\n2 ndy t Xacho teinyhso I g Ime hthhd 1 u, oe pthort llturfuveo\nAasenyUokire a  wri oos“ ycorp,”an f tothy"
+      }
+    ]
+  },
+  "optimizerCompare": {
+    "adamwFinalLoss": 2.7503650096761296,
+    "muonFinalLoss": 2.6647787397977782,
+    "muonBetter": true
+  },
+  "overfit": {
+    "overfitFinalLoss": 0.0000020750885097960754,
+    "ok": true
+  },
+  "irisMlp": {
+    "irisMlpAccuracy": 0.9555555555555556,
+    "ok": true
+  },
+  "ok": true
+}
