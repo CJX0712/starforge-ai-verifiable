@@ -58,8 +58,8 @@ L0 元认知  selfcheck.mjs       不变量的单一事实源（测试/CLI/仪�
 ## 4. 五分钟上手
 
 ```bash
-git clone https://github.com/CJX0712/starforge-ai.git
-cd starforge-ai
+git clone https://github.com/CJX0712/starforge-ai-verifiable.git
+cd starforge-ai-verifiable
 
 node --test                      # ① 测试套件（node:test，零配置）
 node src/cli.mjs selftest        # ② 全引擎不变量自检
@@ -159,7 +159,7 @@ data/         UCI/Gutenberg 原始数据 + 生成的 ES 模块
 
 ## 10. 许可证与署名
 
-MIT License · Copyright © 2026 **晨星**（CJX0712）· [github.com/CJX0712/starforge-ai](https://github.com/CJX0712/starforge-ai)
+MIT License · Copyright © 2026 **晨星**（CJX0712）· [github.com/CJX0712/starforge-ai-verifiable](https://github.com/CJX0712/starforge-ai-verifiable)
 
 引用本项目时请署名：**晨星 / StarForge（星炉）**。
 
